@@ -1,0 +1,23 @@
+# Core Google ADK Framework
+google-adk>=1.0.0
+google-genai>=0.8.0
+google-api-core>=2.0.0
+
+# Vertex AI Agent Engine (Deployment)
+google-cloud-aiplatform[adk,agent_engines]>=1.60.0
+google-cloud-storage>=2.10.0
+
+# Databricks Integration
+databricks-sdk>=0.20.0
+databricks-sql-connector>=3.0.0
+
+# HTTP Client for API calls and Image Downloads
+httpx>=0.24.0
+requests>=2.31.0
+
+# Environment and Configuration
+python-dotenv>=1.0.0
+
+# Additional Dependencies for Agent Framework
+typing-extensions>=4.0.0
+pydantic>=2.0.0
