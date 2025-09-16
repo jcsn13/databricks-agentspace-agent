@@ -27,6 +27,7 @@ from databricks import sql
 
 from .chase_sql import chase_constants
 from .oauth_utils import get_oauth_manager
+from .connectivity_test import run_connectivity_test, log_connectivity_results
 
 # Databricks environment configuration
 project = os.getenv("GOOGLE_CLOUD_PROJECT", None)
@@ -41,6 +42,7 @@ def get_databricks_client(tool_context: ToolContext) -> WorkspaceClient:
 
     This function creates a Databricks WorkspaceClient using manual OAuth M2M authentication.
     The client uses manually generated access tokens with automatic refresh.
+    If connection issues occur, it runs connectivity diagnostics.
 
     Args:
         tool_context: The context object for the tool (not used for manual auth).
@@ -50,32 +52,66 @@ def get_databricks_client(tool_context: ToolContext) -> WorkspaceClient:
     """
     import os
 
-    # Use manual OAuth token generation
-    oauth_manager = get_oauth_manager()
-    config = oauth_manager.get_workspace_client_config()
-
-    # Temporarily mask OAuth env vars to avoid conflicts
-    original_client_id = os.environ.get("DATABRICKS_CLIENT_ID")
-    original_client_secret = os.environ.get("DATABRICKS_CLIENT_SECRET")
-
     try:
-        # Remove OAuth env vars temporarily
-        if "DATABRICKS_CLIENT_ID" in os.environ:
-            del os.environ["DATABRICKS_CLIENT_ID"]
-        if "DATABRICKS_CLIENT_SECRET" in os.environ:
-            del os.environ["DATABRICKS_CLIENT_SECRET"]
+        # Use manual OAuth token generation
+        oauth_manager = get_oauth_manager()
+        config = oauth_manager.get_workspace_client_config()
 
-        # Create client with only token authentication
-        client = WorkspaceClient(**config)
+        # Temporarily mask OAuth env vars to avoid conflicts
+        original_client_id = os.environ.get("DATABRICKS_CLIENT_ID")
+        original_client_secret = os.environ.get("DATABRICKS_CLIENT_SECRET")
 
-    finally:
-        # Restore env vars
-        if original_client_id is not None:
-            os.environ["DATABRICKS_CLIENT_ID"] = original_client_id
-        if original_client_secret is not None:
-            os.environ["DATABRICKS_CLIENT_SECRET"] = original_client_secret
+        try:
+            # Remove OAuth env vars temporarily
+            if "DATABRICKS_CLIENT_ID" in os.environ:
+                del os.environ["DATABRICKS_CLIENT_ID"]
+            if "DATABRICKS_CLIENT_SECRET" in os.environ:
+                del os.environ["DATABRICKS_CLIENT_SECRET"]
 
-    return client
+            # Create client with only token authentication
+            client = WorkspaceClient(**config)
+
+            # Verify the client works by testing a simple operation
+            # This will trigger any connection issues early
+            try:
+                # Simple test - get workspace info (minimal API call)
+                workspace_info = client.workspace.get_status("/")
+                logging.info("Databricks client successfully authenticated and tested")
+            except Exception as test_error:
+                logging.warning(
+                    f"Databricks client created but failed connectivity test: {test_error}"
+                )
+
+        finally:
+            # Restore env vars
+            if original_client_id is not None:
+                os.environ["DATABRICKS_CLIENT_ID"] = original_client_id
+            if original_client_secret is not None:
+                os.environ["DATABRICKS_CLIENT_SECRET"] = original_client_secret
+
+        return client
+
+    except Exception as e:
+        logging.error(f"Failed to create Databricks client: {e}")
+
+        # Run connectivity diagnostics to help troubleshoot
+        logging.info("Running connectivity diagnostics...")
+        try:
+            connectivity_results = run_connectivity_test()
+            log_connectivity_results(connectivity_results)
+
+            # Store diagnostics in tool context for debugging
+            tool_context.state["last_connectivity_test"] = connectivity_results
+
+        except Exception as diag_error:
+            logging.error(f"Failed to run connectivity diagnostics: {diag_error}")
+
+        # Re-raise the original error with enhanced context
+        raise Exception(
+            f"Databricks client creation failed: {e}. "
+            f"This may be due to network connectivity issues. "
+            f"Check the connectivity test results in the logs above."
+        )
 
 
 def get_database_settings(tool_context: ToolContext) -> dict:

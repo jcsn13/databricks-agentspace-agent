@@ -107,6 +107,21 @@ class DatabricksAgentUndeployer:
                     "Detected M2M OAuth deployment - skipping authorization cleanup"
                 )
 
+            # Check if network attachment was used (for informational purposes)
+            self.used_network_attachment = (
+                self.deployment_state.get("network_attachment_id") is not None
+            )
+            if self.used_network_attachment:
+                network_attachment_id = self.deployment_state.get(
+                    "network_attachment_id"
+                )
+                logger.info(
+                    f"Deployment used network attachment: {network_attachment_id}"
+                )
+                logger.info(
+                    "Note: Network infrastructure cleanup should be handled separately via Terraform"
+                )
+
             logger.info(f"Loaded deployment state from: {self.state_file}")
             return self.deployment_state
 
@@ -432,6 +447,16 @@ def main():
                 print(f"   • {error}")
 
         print("=" * 60)
+
+        # Check if Terraform cleanup is needed
+        if (
+            hasattr(undeployer, "used_network_attachment")
+            and undeployer.used_network_attachment
+        ):
+            print("\n🔧 TERRAFORM CLEANUP REQUIRED:")
+            print("   This deployment used Terraform-managed network infrastructure.")
+            print("   To complete cleanup, run:")
+            print("   cd terraform/ && terraform destroy")
 
         # Determine exit code
         if results["errors"]:

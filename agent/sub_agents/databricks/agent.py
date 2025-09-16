@@ -34,6 +34,39 @@ def setup_before_agent_call(callback_context: CallbackContext) -> None:
             callback_context
         )
 
+    # Run connectivity test on first setup
+    if "connectivity_tested" not in callback_context.state:
+        try:
+            from .connectivity_test import (
+                run_connectivity_test,
+                log_connectivity_results,
+            )
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.info("Running Databricks connectivity test...")
+
+            results = run_connectivity_test()
+            log_connectivity_results(results)
+
+            # Store results in state
+            callback_context.state["connectivity_tested"] = True
+            callback_context.state["connectivity_results"] = results
+
+            # Log critical finding about IP usage
+            if "external_ip" in results.get("tests", {}):
+                ip_test = results["tests"]["external_ip"]
+                if ip_test.get("success"):
+                    if ip_test.get("is_using_static_ip"):
+                        logger.info("✅ Traffic is using our static IPs!")
+                    else:
+                        logger.warning(
+                            f"⚠️ Traffic is NOT using our static IPs! Using: {ip_test.get('external_ip')}"
+                        )
+        except Exception as e:
+            logger.warning(f"Connectivity test failed: {e}")
+            callback_context.state["connectivity_tested"] = True
+
 
 database_agent = Agent(
     model=os.getenv("DATABRICKS_AGENT_MODEL"),
