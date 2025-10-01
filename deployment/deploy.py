@@ -108,9 +108,6 @@ class DatabricksAgentDeployer:
             "ANALYTICS_AGENT_MODEL": os.getenv("ANALYTICS_AGENT_MODEL"),
             "BASELINE_NL2SQL_MODEL": os.getenv("BASELINE_NL2SQL_MODEL"),
             "NL2SQL_METHOD": os.getenv("NL2SQL_METHOD"),
-            "CODE_INTERPRETER_EXTENSION_NAME": os.getenv(
-                "CODE_INTERPRETER_EXTENSION_NAME"
-            ),
         }
 
         # Filter out None and empty string values
@@ -209,7 +206,7 @@ class DatabricksAgentDeployer:
             # Prepare requirements - Updated to latest versions
             requirements = [
                 # Core Google ADK Framework
-                "google-adk>=1.0.0",
+                "google-adk==1.15.1",
                 "google-genai>=0.8.0",
                 "google-api-core>=2.0.0",
                 # Vertex AI Agent Engine (Deployment)
