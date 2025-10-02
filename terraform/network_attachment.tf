@@ -10,6 +10,19 @@ resource "google_compute_network_attachment" "psc_attachment" {
   ]
 }
 
+# Wait 300 seconds before destroying the network attachment
+# This allows time for any dependent resources or connections to properly detach
+resource "null_resource" "network_attachment_destroy_delay" {
+  triggers = {
+    network_attachment_id = google_compute_network_attachment.psc_attachment.id
+  }
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = "echo 'Waiting 300 seconds before destroying network attachment...' && sleep 300"
+  }
+}
+
 # Grant necessary IAM role to Vertex AI service agent for network operations
 resource "google_project_iam_member" "vertex_network_admin" {
   project = var.project_id

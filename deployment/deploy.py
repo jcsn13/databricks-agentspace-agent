@@ -36,7 +36,6 @@ from datetime import datetime
 from typing import Dict, Any, Optional
 
 import requests
-from dotenv import load_dotenv
 import vertexai
 from vertexai.preview import reasoning_engines
 from vertexai import agent_engines
@@ -64,8 +63,11 @@ class DatabricksAgentDeployer:
     """Handles deployment of Databricks SQL Agent to Agent Engine and AgentSpace"""
 
     def __init__(self, use_network_attachment: bool = False):
-        """Initialize deployer with environment configuration"""
-        load_dotenv()
+        """Initialize deployer with environment configuration
+
+        Note: All environment variables are now managed and provided by Terraform.
+        This script expects all required environment variables to be set before execution.
+        """
 
         # Required environment variables
         self.project_id = self._get_env_var("GOOGLE_CLOUD_PROJECT")
@@ -120,7 +122,43 @@ class DatabricksAgentDeployer:
         self.deployed_agent = None
         self.authorization_created = False
 
-        logger.info(f"Deployer initialized for project: {self.project_id}")
+        # Log all configuration (mask sensitive values)
+        logger.info("=" * 60)
+        logger.info("DEPLOYMENT CONFIGURATION")
+        logger.info("=" * 60)
+        logger.info(f"Project ID: {self.project_id}")
+        logger.info(f"Location: {self.location}")
+        logger.info(f"Storage Bucket: {self.bucket_name}")
+        logger.info(f"AgentSpace App ID: {self.agentspace_app_id}")
+        logger.info(f"Agent Display Name: {self.agent_display_name}")
+        logger.info(f"Agent Description: {self.agent_description}")
+        logger.info(f"Agent Icon URI: {self.agent_icon_uri}")
+        logger.info(f"Databricks Host: {self.databricks_workspace_host}")
+        logger.info(
+            f"Databricks Client ID: {self.databricks_oauth_client_id[:8]}..."
+            if self.databricks_oauth_client_id
+            else "Not set"
+        )
+        logger.info(f"Databricks Client Secret: {'*' * 8}... (masked)")
+        logger.info(f"Authorization ID: {self.authorization_id}")
+
+        if self.use_network_attachment:
+            logger.info(f"Network Attachment ID: {self.network_attachment_id}")
+            logger.info(
+                f"Static IPs: {', '.join(self.static_ips) if self.static_ips else 'None'}"
+            )
+
+        logger.info("\nEnvironment Variables for Agent Runtime:")
+        for key, value in sorted(self.agent_env_vars.items()):
+            # Mask sensitive values
+            if "SECRET" in key or "PASSWORD" in key:
+                display_value = f"{'*' * 8}... (masked)"
+            elif "CLIENT_ID" in key:
+                display_value = f"{value[:8]}..." if value else "Not set"
+            else:
+                display_value = value
+            logger.info(f"  {key}: {display_value}")
+        logger.info("=" * 60)
 
     def _get_env_var(self, name: str) -> str:
         """Get required environment variable or raise error"""

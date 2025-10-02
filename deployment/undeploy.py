@@ -34,7 +34,6 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 
 import requests
-from dotenv import load_dotenv
 import vertexai
 from vertexai import agent_engines
 from google.api_core import exceptions as google_exceptions
@@ -56,9 +55,11 @@ class DatabricksAgentUndeployer:
     """Handles undeployment of Databricks SQL Agent from Agent Engine and AgentSpace"""
 
     def __init__(self):
-        """Initialize undeployer with configuration"""
-        load_dotenv()
+        """Initialize undeployer with configuration
 
+        Note: This script reads deployment state from the state file.
+        No environment variables are required for undeployment.
+        """
         # Deployment state file
         self.state_file = Path("deployment/.deployment_state.json")
         self.deployment_state = None
