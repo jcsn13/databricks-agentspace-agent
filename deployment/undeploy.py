@@ -34,7 +34,6 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 
 import requests
-from dotenv import load_dotenv
 import vertexai
 from vertexai import agent_engines
 from google.api_core import exceptions as google_exceptions
@@ -56,9 +55,11 @@ class DatabricksAgentUndeployer:
     """Handles undeployment of Databricks SQL Agent from Agent Engine and AgentSpace"""
 
     def __init__(self):
-        """Initialize undeployer with configuration"""
-        load_dotenv()
+        """Initialize undeployer with configuration
 
+        Note: This script reads deployment state from the state file.
+        No environment variables are required for undeployment.
+        """
         # Deployment state file
         self.state_file = Path("deployment/.deployment_state.json")
         self.deployment_state = None
@@ -105,6 +106,21 @@ class DatabricksAgentUndeployer:
             if self.is_m2m_deployment:
                 logger.info(
                     "Detected M2M OAuth deployment - skipping authorization cleanup"
+                )
+
+            # Check if network attachment was used (for informational purposes)
+            self.used_network_attachment = (
+                self.deployment_state.get("network_attachment_id") is not None
+            )
+            if self.used_network_attachment:
+                network_attachment_id = self.deployment_state.get(
+                    "network_attachment_id"
+                )
+                logger.info(
+                    f"Deployment used network attachment: {network_attachment_id}"
+                )
+                logger.info(
+                    "Note: Network infrastructure cleanup should be handled separately via Terraform"
                 )
 
             logger.info(f"Loaded deployment state from: {self.state_file}")
@@ -432,6 +448,16 @@ def main():
                 print(f"   • {error}")
 
         print("=" * 60)
+
+        # Check if Terraform cleanup is needed
+        if (
+            hasattr(undeployer, "used_network_attachment")
+            and undeployer.used_network_attachment
+        ):
+            print("\n🔧 TERRAFORM CLEANUP REQUIRED:")
+            print("   This deployment used Terraform-managed network infrastructure.")
+            print("   To complete cleanup, run:")
+            print("   cd terraform/ && terraform destroy")
 
         # Determine exit code
         if results["errors"]:

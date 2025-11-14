@@ -5,10 +5,13 @@ This module implements manual OAuth token generation following the official
 Databricks documentation for M2M authentication.
 """
 
+import os
 import time
 import logging
 import requests
 from typing import Optional, Dict, Any
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from ...utils.utils import get_env_var
 
 logger = logging.getLogger(__name__)
@@ -29,6 +32,44 @@ class DatabricksOAuthManager:
         # Token cache
         self._token_cache = {}
         self._token_expiry = {}
+
+        # Create resilient session with retries and timeouts
+        self._session = self._create_resilient_session()
+
+    def _create_resilient_session(self) -> requests.Session:
+        """Create a requests session with retry logic and timeouts."""
+        session = requests.Session()
+
+        # Configure proxy settings from environment variables if present
+        http_proxy = os.getenv("HTTP_PROXY")
+        https_proxy = os.getenv("HTTPS_PROXY", http_proxy)  # Fallback to HTTP_PROXY
+
+        if http_proxy or https_proxy:
+            proxies = {}
+            if http_proxy:
+                proxies["http"] = http_proxy
+            if https_proxy:
+                proxies["https"] = https_proxy
+
+            session.proxies.update(proxies)
+            logger.info(
+                f"Configured session to use proxy: {proxies.get('https', proxies.get('http'))}"
+            )
+
+        # Configure retry strategy
+        retry_strategy = Retry(
+            total=3,  # Total number of retries
+            backoff_factor=1,  # Wait 1, 2, 4 seconds between retries
+            status_forcelist=[429, 500, 502, 503, 504],  # HTTP codes to retry
+            allowed_methods=["POST"],  # Only retry POST requests
+        )
+
+        # Mount adapter with retry strategy
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+
+        return session
 
     def get_oauth_token(
         self, workspace_url: str, client_id: str, client_secret: str
@@ -62,8 +103,20 @@ class DatabricksOAuthManager:
         }
 
         try:
-            # Make token request
-            response = requests.post(auth_url, data=data)
+            logger.info(f"Attempting OAuth token request to: {auth_url}")
+
+            # Make token request with resilient session and timeouts
+            response = self._session.post(
+                auth_url,
+                data=data,
+                timeout=(10, 30),  # 10s connect timeout, 30s read timeout
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "User-Agent": "Databricks-Agent/1.0",
+                },
+            )
+
+            logger.info(f"OAuth request completed with status: {response.status_code}")
             response.raise_for_status()  # Raise exception for HTTP errors
 
             # Parse response
@@ -73,12 +126,26 @@ class DatabricksOAuthManager:
             logger.info("Successfully generated OAuth access token")
             return access_token
 
+        except requests.exceptions.Timeout as e:
+            error_msg = f"OAuth request timed out after 30 seconds: {e}"
+            logger.error(error_msg)
+            raise Exception(error_msg)
+        except requests.exceptions.ConnectionError as e:
+            error_msg = f"Failed to connect to Databricks OAuth endpoint: {e}"
+            logger.error(error_msg)
+            raise Exception(error_msg)
         except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to get OAuth token: {e}")
-            raise Exception(f"OAuth token generation failed: {e}")
+            error_msg = f"OAuth request failed: {e}"
+            logger.error(error_msg)
+            raise Exception(error_msg)
         except KeyError as e:
-            logger.error(f"Invalid token response format: {e}")
-            raise Exception(f"Invalid token response: {e}")
+            error_msg = f"Invalid OAuth response format - missing {e}: {response.text if 'response' in locals() else 'Unknown'}"
+            logger.error(error_msg)
+            raise Exception(error_msg)
+        except Exception as e:
+            error_msg = f"Unexpected error during OAuth token generation: {e}"
+            logger.error(error_msg)
+            raise Exception(error_msg)
 
     def get_cached_token(self) -> str:
         """

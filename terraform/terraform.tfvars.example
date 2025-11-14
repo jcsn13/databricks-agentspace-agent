@@ -1,0 +1,59 @@
+# Terraform Variables Example Configuration
+# Copy this file to terraform.tfvars and update with your values
+
+# Required: GCP Project Configuration
+project_id = "your-gcp-project-id"
+region     = "us-central1"
+
+# VPC Network Configuration (optional - defaults provided)
+vpc_network_name = "databricks-agent-vpc"
+vpc_subnet_name  = "databricks-agent-subnet"
+vpc_subnet_cidr  = "10.0.0.0/24"
+
+# NAT Configuration (optional - defaults provided)
+cloud_router_name      = "databricks-agent-router"
+cloud_nat_gateway_name = "databricks-agent-nat"
+static_ip_count        = 4
+
+# Network Attachment Configuration (optional - defaults provided)
+network_attachment_name = "databricks-agent-attachment"
+
+# Agent Deployment Configuration (optional - defaults provided)
+deploy_agent                 = true
+agent_deployment_script_path = "../deployment/deploy.py"
+
+# Google Cloud Agent Configuration
+google_cloud_storage_bucket = "your-project-id-adk-staging"
+
+# AgentSpace Configuration
+agentspace_app_id  = "agentspace-demo_1234567890"
+agent_display_name = "Databricks Agent"
+agent_description  = "Agent para queries no Databricks com análise avançada"
+agent_icon_uri     = "https://fonts.gstatic.com/s/i/short-term/release/googlesymbols/database/default/24px.svg"
+
+# Databricks OAuth M2M Configuration
+# IMPORTANT: Replace these with your actual Databricks credentials
+# Create a service principal and OAuth secret in your Databricks workspace
+# See: https://docs.databricks.com/aws/en/dev-tools/auth/oauth-m2m
+databricks_client_id          = "your-service-principal-client-id"
+databricks_client_secret      = "your-service-principal-oauth-secret"
+databricks_host               = "https://your-workspace.cloud.databricks.com"
+databricks_sql_warehouse_path = "/sql/1.0/warehouses/your-warehouse-id"
+databricks_catalog            = "samples"
+databricks_schema             = "nyctaxi"
+
+# Model Configuration (optional - defaults provided)
+root_agent_model       = "gemini-2.5-flash"
+databricks_agent_model = "gemini-2.5-flash"
+analytics_agent_model  = "gemini-2.5-flash"
+baseline_nl2sql_model  = "gemini-2.5-flash"
+
+# NL2SQL Configuration (optional - defaults provided)
+nl2sql_method    = "BASELINE"
+authorization_id = "databricks-agent-auth"
+
+# Note: To use this configuration:
+# 1. Copy this file: cp terraform.tfvars.example terraform.tfvars
+# 2. Update all placeholder values (especially Databricks credentials)
+# 3. Ensure terraform.tfvars is in .gitignore (sensitive values should not be committed)
+# 4. Run: terraform init && terraform plan && terraform apply

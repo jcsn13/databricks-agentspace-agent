@@ -30,12 +30,12 @@ import sys
 import json
 import logging
 import subprocess
+import argparse
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, Optional
 
 import requests
-from dotenv import load_dotenv
 import vertexai
 from vertexai.preview import reasoning_engines
 from vertexai import agent_engines
@@ -62,14 +62,24 @@ class DeploymentError(Exception):
 class DatabricksAgentDeployer:
     """Handles deployment of Databricks SQL Agent to Agent Engine and AgentSpace"""
 
-    def __init__(self):
-        """Initialize deployer with environment configuration"""
-        load_dotenv()
+    def __init__(self, use_network_attachment: bool = False):
+        """Initialize deployer with environment configuration
+
+        Note: All environment variables are now managed and provided by Terraform.
+        This script expects all required environment variables to be set before execution.
+        """
 
         # Required environment variables
         self.project_id = self._get_env_var("GOOGLE_CLOUD_PROJECT")
         self.location = self._get_env_var("GOOGLE_CLOUD_LOCATION")
         self.bucket_name = self._get_env_var("GOOGLE_CLOUD_STORAGE_BUCKET")
+
+        # Network attachment configuration for static IP
+        self.use_network_attachment = use_network_attachment
+        self.network_attachment_id = os.getenv("NETWORK_ATTACHMENT_ID")
+        self.static_ips = (
+            os.getenv("STATIC_IPS", "").split(",") if os.getenv("STATIC_IPS") else []
+        )
 
         # AgentSpace configuration
         self.agentspace_app_id = self._get_env_var("AGENTSPACE_APP_ID")
@@ -100,9 +110,6 @@ class DatabricksAgentDeployer:
             "ANALYTICS_AGENT_MODEL": os.getenv("ANALYTICS_AGENT_MODEL"),
             "BASELINE_NL2SQL_MODEL": os.getenv("BASELINE_NL2SQL_MODEL"),
             "NL2SQL_METHOD": os.getenv("NL2SQL_METHOD"),
-            "CODE_INTERPRETER_EXTENSION_NAME": os.getenv(
-                "CODE_INTERPRETER_EXTENSION_NAME"
-            ),
         }
 
         # Filter out None and empty string values
@@ -115,7 +122,43 @@ class DatabricksAgentDeployer:
         self.deployed_agent = None
         self.authorization_created = False
 
-        logger.info(f"Deployer initialized for project: {self.project_id}")
+        # Log all configuration (mask sensitive values)
+        logger.info("=" * 60)
+        logger.info("DEPLOYMENT CONFIGURATION")
+        logger.info("=" * 60)
+        logger.info(f"Project ID: {self.project_id}")
+        logger.info(f"Location: {self.location}")
+        logger.info(f"Storage Bucket: {self.bucket_name}")
+        logger.info(f"AgentSpace App ID: {self.agentspace_app_id}")
+        logger.info(f"Agent Display Name: {self.agent_display_name}")
+        logger.info(f"Agent Description: {self.agent_description}")
+        logger.info(f"Agent Icon URI: {self.agent_icon_uri}")
+        logger.info(f"Databricks Host: {self.databricks_workspace_host}")
+        logger.info(
+            f"Databricks Client ID: {self.databricks_oauth_client_id[:8]}..."
+            if self.databricks_oauth_client_id
+            else "Not set"
+        )
+        logger.info(f"Databricks Client Secret: {'*' * 8}... (masked)")
+        logger.info(f"Authorization ID: {self.authorization_id}")
+
+        if self.use_network_attachment:
+            logger.info(f"Network Attachment ID: {self.network_attachment_id}")
+            logger.info(
+                f"Static IPs: {', '.join(self.static_ips) if self.static_ips else 'None'}"
+            )
+
+        logger.info("\nEnvironment Variables for Agent Runtime:")
+        for key, value in sorted(self.agent_env_vars.items()):
+            # Mask sensitive values
+            if "SECRET" in key or "PASSWORD" in key:
+                display_value = f"{'*' * 8}... (masked)"
+            elif "CLIENT_ID" in key:
+                display_value = f"{value[:8]}..." if value else "Not set"
+            else:
+                display_value = value
+            logger.info(f"  {key}: {display_value}")
+        logger.info("=" * 60)
 
     def _get_env_var(self, name: str) -> str:
         """Get required environment variable or raise error"""
@@ -176,8 +219,10 @@ class DatabricksAgentDeployer:
         logger.info("Deploying to Vertex AI Agent Engine...")
 
         try:
-            # Initialize Vertex AI
+            # Setup staging bucket
             staging_bucket_uri = self.setup_staging_bucket()
+
+            # Initialize Vertex AI (legacy API for compatibility)
             vertexai.init(
                 project=self.project_id,
                 location=self.location,
@@ -196,10 +241,10 @@ class DatabricksAgentDeployer:
                 enable_tracing=True,
             )
 
-            # Prepare requirements
+            # Prepare requirements - Updated to latest versions
             requirements = [
                 # Core Google ADK Framework
-                "google-adk>=1.0.0",
+                "google-adk==1.15.1",
                 "google-genai>=0.8.0",
                 "google-api-core>=2.0.0",
                 # Vertex AI Agent Engine (Deployment)
@@ -227,18 +272,58 @@ class DatabricksAgentDeployer:
 
             # Deploy to Agent Engine
             logger.info("Creating Agent Engine deployment...")
-            self.deployed_agent = agent_engines.create(
-                agent_engine=adk_app,
-                requirements=requirements,
-                extra_packages=["./agent"],
-                env_vars=self.agent_env_vars,
-            )
+
+            # Prepare deployment arguments (legacy API format)
+            # Use relative path from project root to ensure proper package structure
+            deploy_kwargs = {
+                "agent_engine": adk_app,
+                "requirements": requirements,
+                "extra_packages": [
+                    "agent"
+                ],  # Relative path preserves package structure
+                "env_vars": self.agent_env_vars,
+            }
+
+            # Add network attachment if available for static IP support
+            if self.use_network_attachment and self.network_attachment_id:
+                # Simplified PSC config - just network attachment for VPC access
+                psc_config = {"network_attachment": self.network_attachment_id}
+                deploy_kwargs["psc_interface_config"] = psc_config
+
+                # Get proxy IP from environment (set after Terraform deployment)
+                proxy_ip = os.getenv("PROXY_INTERNAL_IP")
+                if proxy_ip:
+                    # Add proxy environment variables to force traffic through proxy
+                    proxy_url = f"http://{proxy_ip}:3128"
+                    self.agent_env_vars.update(
+                        {
+                            "HTTP_PROXY": proxy_url,
+                            "HTTPS_PROXY": proxy_url,
+                            "NO_PROXY": "localhost,127.0.0.1,metadata.google.internal",
+                        }
+                    )
+                    logger.info(f"Configured HTTP proxy: {proxy_url}")
+                else:
+                    logger.warning(
+                        "PROXY_INTERNAL_IP not set - agent will not use proxy"
+                    )
+
+                logger.info(
+                    f"Using network attachment for VPC access: {self.network_attachment_id}"
+                )
+
+                if self.static_ips:
+                    logger.info(f"Static IPs (via proxy): {', '.join(self.static_ips)}")
+
+            # Use legacy API for compatibility
+            self.deployed_agent = agent_engines.create(**deploy_kwargs)
 
             resource_name = self.deployed_agent.resource_name
             logger.info(f"Successfully deployed to Agent Engine: {resource_name}")
             return resource_name
 
         except Exception as e:
+            logger.error(f"Agent Engine deployment error details: {e}")
             raise DeploymentError(f"Agent Engine deployment failed: {e}")
 
     # OAuth authorization functions removed - not needed for M2M OAuth
@@ -368,8 +453,29 @@ class DatabricksAgentDeployer:
 
 def main():
     """Main deployment function"""
+    parser = argparse.ArgumentParser(
+        description="Deploy Databricks SQL Agent to Google Cloud Agent Engine and AgentSpace"
+    )
+    parser.add_argument(
+        "--network-attachment",
+        action="store_true",
+        help="Use network attachment for static IP support (for Terraform integration)",
+    )
+
+    args = parser.parse_args()
+
     try:
-        deployer = DatabricksAgentDeployer()
+        deployer = DatabricksAgentDeployer(
+            use_network_attachment=args.network_attachment
+        )
+
+        if args.network_attachment:
+            logger.info(
+                "Network attachment mode enabled - using static IP configuration"
+            )
+            if not os.getenv("NETWORK_ATTACHMENT_ID"):
+                logger.warning("NETWORK_ATTACHMENT_ID environment variable not set")
+
         result = deployer.deploy()
 
         print("\n" + "=" * 60)
@@ -378,6 +484,13 @@ def main():
         print(f"Agent Resource: {result['agent_resource_name']}")
         print(f"AgentSpace Agent ID: {result['agent_id']}")
         print(f"AgentSpace URL: {result['agentspace_url']}")
+
+        if args.network_attachment and deployer.static_ips:
+            print(f"\n🌐 Static IP Configuration:")
+            print(f"Network Attachment: {deployer.network_attachment_id}")
+            print(f"Static IPs: {', '.join(deployer.static_ips)}")
+            print("These IPs can be allowlisted in Databricks for secure access.")
+
         print("\nYour Databricks SQL Agent is now available in Google AgentSpace!")
         print("=" * 60)
 

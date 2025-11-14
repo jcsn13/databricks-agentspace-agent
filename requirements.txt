@@ -15,9 +15,6 @@ databricks-sql-connector>=3.0.0
 httpx>=0.24.0
 requests>=2.31.0
 
-# Environment and Configuration
-python-dotenv>=1.0.0
-
 # Additional Dependencies for Agent Framework
 typing-extensions>=4.0.0
 pydantic>=2.0.0
